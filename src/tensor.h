@@ -15,6 +15,7 @@
     #include <vector>
     #include <iostream>
     #include <functional>
+    #include <numeric>
 
 
     namespace utec::algebra {
@@ -53,8 +54,7 @@
             }
 
             template <typename OStream>
-            void print_tensor_recursive(OStream& os, std::array<std::size_t, N> indices,
-                                       size_t dim_idx) const {
+            void print_tensor_recursive(OStream& os, std::array<std::size_t, N> indices, size_t dim_idx) const {
                 if (dim_idx == N - 1) {
                     for (size_t i = 0; i < dimensions_[dim_idx]; ++i) {
                         indices[dim_idx] = i;
@@ -79,6 +79,10 @@
             }
 
         public:
+
+            using iterator = typename std::vector<T>::iterator;
+            using const_iterator = typename std::vector<T>::const_iterator;
+
             Tensor() : dimensions_{}, data_() {}
 
             //Constructor con dimensiones especificas
@@ -109,6 +113,21 @@
                 }
                 data_.assign(elements.begin(), elements.end());
                 return *this;
+            }
+
+            template<typename... Args>
+            T& operator()(Args... args) {
+                static_assert(sizeof...(args) == N, "Wrong number of arguments passed");
+                std::array<std::size_t, N> idx_array = { static_cast<std::size_t>(args)... };
+                for (size_t i = 0; i < N; ++i) {
+                    if (idx_array[i] >= dimensions_[i]) {
+                        std::ostringstream oss;
+                        oss << "Index out of bounds for dimension " << i
+                            << ": " << idx_array[i] << " >= " << dimensions_[i];
+                        throw std::out_of_range(oss.str());
+                    }
+                }
+                return data_[calculate_linear_index(idx_array)];
             }
 
             template<typename... Args>
@@ -146,6 +165,13 @@
                 std::fill(data_.begin(), data_.end(), value);
             }
 
+            iterator begin() { return data_.begin(); }
+            iterator end() { return data_.end(); }
+            const_iterator begin() const { return data_.begin(); }
+            const_iterator end() const { return data_.end(); }
+            const_iterator cbegin() const { return data_.cbegin(); }
+            const_iterator cend() const { return data_.cend(); }
+
             friend std::ostream& operator<<(std::ostream& os, const Tensor<T, N>& tensor) {
                 if (tensor.data_.empty()) {
                     os << "{}";
@@ -166,6 +192,31 @@
             bool operator!=(const Tensor<T, N>& other) const {
                 return !(*this == other);
             }
+
+            Tensor<T, N> operator+(const Tensor<T, N>& other) const {
+                if (dimensions_ != other.dimensions_) {
+                    throw std::invalid_argument("Shapes do not match and they are not compatible for broadcasting");
+                }
+                Tensor<T, N> result(*this);
+                for (size_t i = 0; i < data_.size(); ++i) {
+                    result.data_[i] += other.data_[i];
+                }
+
+                return result;
+            }
+
+            Tensor<T, N> operator-(const Tensor<T, N>& other) const {
+                if (dimensions_ != other.dimensions_) {
+                    throw std::invalid_argument("Cannot subtract tensors with different dimensions");
+                }
+                Tensor<T, N> result(*this);
+                for (size_t i = 0; i < data_.size(); ++i) {
+                    result.data_[i] -= other.data_[i];
+                }
+
+                return result;
+            }
+
         };
     }
 
