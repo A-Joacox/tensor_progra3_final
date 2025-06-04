@@ -115,10 +115,11 @@
                 return *this;
             }
 
+            // Versión mutable (devuelve T&)
             template<typename... Args>
             T& operator()(Args... args) {
                 static_assert(sizeof...(args) == N, "Wrong number of arguments passed");
-                std::array<std::size_t, N> idx_array = { static_cast<std::size_t>(args)... };
+                std::array<size_t, N> idx_array = { static_cast<size_t>(args)... };
                 for (size_t i = 0; i < N; ++i) {
                     if (idx_array[i] >= dimensions_[i]) {
                         std::ostringstream oss;
@@ -129,6 +130,24 @@
                 }
                 return data_[calculate_linear_index(idx_array)];
             }
+
+            // Versión const (devuelve const T&)
+            template<typename... Args>
+            const T& operator()(Args... args) const {
+                static_assert(sizeof...(args) == N, "Wrong number of arguments passed");
+                std::array<size_t, N> idx_array = { static_cast<size_t>(args)... };
+                for (size_t i = 0; i < N; ++i) {
+                    if (idx_array[i] >= dimensions_[i]) {
+                        std::ostringstream oss;
+                        oss << "Index out of bounds for dimension " << i
+                            << ": " << idx_array[i] << " >= " << dimensions_[i];
+                        throw std::out_of_range(oss.str());
+                    }
+                }
+                return data_[calculate_linear_index(idx_array)];
+            }
+
+
 
             template<typename... Args>
             void reshape(Args&&... args) {
@@ -193,31 +212,260 @@
                 return !(*this == other);
             }
 
+
+            static std::array<std::size_t, N> broadcast_shape(const std::array<std::size_t, N>& A, const std::array<std::size_t, N>& B)
+            {
+                std::array<std::size_t, N> R;
+                for (size_t d = 0; d < N; ++d) {
+                    auto a = A[d], b = B[d];
+                    if (a == b) {
+                        R[d] = a;
+                    } else if (a == 1) {
+                        R[d] = b;
+                    } else if (b == 1) {
+                        R[d] = a;
+                    } else {
+                        throw std::invalid_argument(
+                           "Shapes do not match and they are not compatible for broadcasting");
+                    }
+                }
+                return R;
+            }
+
             Tensor<T, N> operator+(const Tensor<T, N>& other) const {
-                if (dimensions_ != other.dimensions_) {
-                    throw std::invalid_argument("Shapes do not match and they are not compatible for broadcasting");
-                }
+                auto shapeA = dimensions_;
+                auto shapeB = other.dimensions_;
+                auto shapeR = broadcast_shape(shapeA, shapeB);
+                Tensor<T, N> result;
+                result.dimensions_ = shapeR;
+                size_t totalR = 1;
+                for (auto x : shapeR)
+                    totalR *= x;
+                result.data_.resize(totalR);
+
+                for (size_t linear = 0; linear < totalR; ++linear) {
+                    size_t rem = linear;
+                    std::array<std::size_t, N> idxR;
+                        for (size_t d = 0; d < N; ++d) {
+                            size_t stride = 1;
+                            for (size_t e = d + 1; e < N; ++e)
+                                stride *= shapeR[e];
+                                idxR[d] = rem / stride;
+                                rem %= stride;
+                            }
+                     std::array<std::size_t, N> idxA, idxB;
+                         for (size_t d = 0; d < N; ++d) {
+                            idxA[d] = (shapeA[d] == 1 ? 0 : idxR[d]);
+                            idxB[d] = (shapeB[d] == 1 ? 0 : idxR[d]);
+                            }
+                    size_t offA = 0, offB = 0;
+                    size_t mulA = 1, mulB = 1;
+                    for (size_t d = N; d-- > 0; ) {
+                        offA += idxA[d] * mulA;
+                        mulA *= shapeA[d];
+                        offB += idxB[d] * mulB;
+                        mulB *= shapeB[d];
+                        }
+                result.data_[linear] = data_[offA] + other.data_[offB];
+            }
+                return result;
+}
+
+Tensor<T, N> operator-(const Tensor<T, N>& other) const {
+    auto shapeA = dimensions_;
+    auto shapeB = other.dimensions_;
+    auto shapeR = broadcast_shape(shapeA, shapeB);
+    Tensor<T, N> result;
+    result.dimensions_ = shapeR;
+    size_t totalR = 1;
+    for (auto x : shapeR) totalR *= x;
+    result.data_.resize(totalR);
+
+    for (size_t linear = 0; linear < totalR; ++linear) {
+        size_t rem = linear;
+        std::array<std::size_t, N> idxR;
+        for (size_t d = 0; d < N; ++d) {
+            size_t stride = 1;
+            for (size_t e = d + 1; e < N; ++e)
+                stride *= shapeR[e];
+            idxR[d] = rem / stride;
+            rem %= stride;
+        }
+        std::array<std::size_t, N> idxA, idxB;
+        for (size_t d = 0; d < N; ++d) {
+            idxA[d] = (shapeA[d] == 1 ? 0 : idxR[d]);
+            idxB[d] = (shapeB[d] == 1 ? 0 : idxR[d]);
+        }
+        size_t offA = 0, offB = 0;
+        size_t mulA = 1, mulB = 1;
+        for (size_t d = N; d-- > 0; ) {
+            offA += idxA[d] * mulA;
+            mulA *= shapeA[d];
+            offB += idxB[d] * mulB;
+            mulB *= shapeB[d];
+        }
+        result.data_[linear] = data_[offA] - other.data_[offB];
+    }
+    return result;
+}
+
+            Tensor<T, N> operator-(const T number) const {
                 Tensor<T, N> result(*this);
                 for (size_t i = 0; i < data_.size(); ++i) {
-                    result.data_[i] += other.data_[i];
+                    result.data_[i] -= number;
                 }
-
                 return result;
             }
 
-            Tensor<T, N> operator-(const Tensor<T, N>& other) const {
-                if (dimensions_ != other.dimensions_) {
-                    throw std::invalid_argument("Cannot subtract tensors with different dimensions");
-                }
+            Tensor<T, N> operator+(const T number) const {
                 Tensor<T, N> result(*this);
                 for (size_t i = 0; i < data_.size(); ++i) {
-                    result.data_[i] -= other.data_[i];
+                    result.data_[i] += number;
                 }
-
                 return result;
             }
+
+            Tensor<T, N> operator/(const T number) const {
+                Tensor<T, N> result(*this);
+                for (size_t i = 0; i < data_.size(); ++i) {
+                    result.data_[i] = result.data_[i]/number;
+                }
+                return result;
+            }
+
+
+            Tensor<T, N> operator*(const Tensor<T, N>& other) const {
+                auto shapeA = dimensions_;
+                auto shapeB = other.dimensions_;
+                auto shapeR = broadcast_shape(shapeA, shapeB);
+                Tensor<T, N> result;
+                result.dimensions_ = shapeR;
+                size_t totalR = 1;
+                for (auto x : shapeR) totalR *= x;
+                result.data_.resize(totalR);
+
+                for (size_t linear = 0; linear < totalR; ++linear) {
+                    size_t rem = linear;
+                    std::array<std::size_t, N> idxR;
+                    for (size_t d = 0; d < N; ++d) {
+                        size_t stride = 1;
+                        for (size_t e = d + 1; e < N; ++e)
+                            stride *= shapeR[e];
+                        idxR[d] = rem / stride;
+                        rem %= stride;
+                    }
+                    std::array<std::size_t, N> idxA, idxB;
+                    for (size_t d = 0; d < N; ++d) {
+                        idxA[d] = (shapeA[d] == 1 ? 0 : idxR[d]);
+                        idxB[d] = (shapeB[d] == 1 ? 0 : idxR[d]);
+                    }
+                    size_t offA = 0, offB = 0;
+                    size_t mulA = 1, mulB = 1;
+                    for (size_t d = N; d-- > 0; ) {
+                        offA += idxA[d] * mulA;
+                        mulA *= shapeA[d];
+                        offB += idxB[d] * mulB;
+                        mulB *= shapeB[d];
+                    }
+                    result.data_[linear] = data_[offA] * other.data_[offB];
+                }
+                return result;
+            }
+
 
         };
+
+        template<typename T, size_t N>
+        Tensor<T, N> transpose_2d(const Tensor<T, N>& A) {
+            if constexpr (N < 2) {
+                throw std::runtime_error("Cannot transpose 1D tensor: need at least 2 dimensions");
+            }
+
+            auto shapeA = A.shape(); // std::array<size_t, N>
+
+            std::array<size_t, N> shapeR = shapeA;
+            std::swap(shapeR[N - 1], shapeR[N - 2]);
+
+            auto make_B = [&]<size_t... Is>(std::index_sequence<Is...>) {
+                return Tensor<T, N>(shapeR[Is]...);
+            };
+            Tensor<T, N> B = make_B(std::make_index_sequence<N>{});
+
+            size_t total = 1;
+            for (size_t d = 0; d < N; ++d) {
+                total *= shapeR[d];
+            }
+
+            for (size_t lin = 0; lin < total; ++lin) {
+                size_t rem = lin;
+                std::array<size_t, N> idxA;
+                for (size_t d = 0; d < N; ++d) {
+                    size_t stride = 1;
+                    for (size_t e = d + 1; e < N; ++e) {
+                        stride *= shapeA[e];
+                    }
+                    idxA[d] = rem / stride;
+                    rem %= stride;
+                }
+
+                std::array<size_t, N> idxR = idxA;
+                std::swap(idxR[N - 1], idxR[N - 2]);
+
+                size_t linR = 0;
+                size_t mul = 1;
+                for (size_t d = N; d-- > 0; ) {
+                    linR += idxR[d] * mul;
+                    mul *= shapeR[d];
+                }
+
+                B[linR] = A[lin];
+            }
+
+            return B;
+        }
+
+        template<typename T, size_t N>
+        Tensor<T, N> operator+(const T& scalar, const Tensor<T, N>& A) {
+            return A + scalar;
+        }
+
+        template<typename T, size_t N>
+Tensor<T, N> matrix_product(const Tensor<T, N>& A, const Tensor<T, N>& B) {
+            if constexpr (N != 3) {
+                throw std::runtime_error("Matrix dimensions are incompatible for multiplication");
+            } else {
+                auto shapeA = A.shape(); // {batchA, M, K}
+                auto shapeB = B.shape(); // {batchB, Kp, Ncol}
+                size_t batchA = shapeA[0], M = shapeA[1], K = shapeA[2];
+                size_t batchB = shapeB[0], Kp = shapeB[1], Ncol = shapeB[2];
+
+                if (K != Kp) {
+                    throw std::runtime_error("Matrix dimensions are incompatible for multiplication");
+                }
+                if (batchA != batchB) {
+                    throw std::runtime_error(
+                        "Matrix dimensions are compatible for multiplication BUT Batch dimensions do not match");
+                }
+
+                Tensor<T, 3> C(batchA, M, Ncol);
+                C.fill(T{});
+
+                for (size_t i = 0; i < batchA; ++i) {
+                    for (size_t p = 0; p < M; ++p) {
+                        for (size_t q = 0; q < Ncol; ++q) {
+                            T acc = T{};
+                            for (size_t r = 0; r < K; ++r) {
+                                acc += A(i, p, r) * B(i, r, q);
+                            }
+                            C(i, p, q) = acc;
+                        }
+                    }
+                }
+                return C;
+            }
+        }
+
+
     }
 
     #endif //PROG3_TENSOR_FINAL_PROJECT_V2025_01_TENSOR_H
